@@ -1,0 +1,167 @@
+from builtins import object
+import numpy as np
+
+from ..layers import *
+from ..fast_layers import *
+from ..layer_utils import *
+
+
+class ThreeLayerConvNet(object):
+    """
+    一个三层卷积网络，架构如下：
+
+    卷积 - ReLU - 2x2最大池化 - 仿射 - ReLU - 仿射 - softmax
+
+    该网络处理形状为(N, C, H, W)的小批量数据，其中包含N个图像，每个图像的高度为H、宽度为W，且有C个输入通道。
+    """
+
+    def __init__(
+        self,
+        input_dim=(3, 32, 32),
+        num_filters=32,
+        filter_size=7,
+        hidden_dim=100,
+        num_classes=10,
+        weight_scale=1e-3,
+        reg=0.0,
+        dtype=np.float32,
+    ):
+        """
+        初始化一个新网络。
+
+        输入：
+        - input_dim: 元组(C, H, W)，给出输入数据的大小
+        - num_filters: 卷积层中使用的滤波器数量
+        - filter_size: 卷积层中使用的滤波器的宽/高
+        - hidden_dim: 全连接隐藏层中使用的单元数量
+        - num_classes: 最终仿射层产生的得分数量。
+        - weight_scale: 标量，给出权重随机初始化的标准差
+        - reg: 标量，给出L2正则化强度
+        - dtype: 用于计算的numpy数据类型
+        """
+        self.params = {}
+        self.reg = reg
+        self.dtype = dtype
+
+        ################################################################################################
+        # 为三层卷积网络初始化权重和偏置。权重应从以0.0为中心、标准差等于weight_scale的高斯分布初始化       # 
+        # 偏置应初始化为零。所有权重和偏置应存储在字典self.params中。卷积层的权重和偏置使用键'W1'和'b1'存储 #
+        # 隐藏仿射层的权重和偏置使用键'W2'和'b2'，输出仿射层的权重和偏置使用键'W3'和'b3'。                 #
+        #                                                                                              #
+        # 重要提示：在本作业中，可以假设第一个卷积层的填充和步长选择为**保持输入的宽度和高度不变**。        #
+        # 查看loss()函数的开头，了解这是如何实现的。                                                    #
+        ##############################################################################################
+        # 
+        # 初始化第一层（卷积层）权重/偏置
+        C, H, W = input_dim
+        # W1: (F, C, HH, WW)
+        self.params['W1'] = np.random.randn(num_filters, C, filter_size, filter_size) * weight_scale
+        self.params['b1'] = np.zeros(num_filters)
+
+        # 池化后空间尺寸减半（2x2池化，stride=2）
+        H_pool = H // 2
+        W_pool = W // 2
+
+        # 第二层（隐藏仿射层）权重/偏置
+        # W2的形状为 (D, hidden_dim)，其中D = num_filters * H_pool * W_pool
+        D = num_filters * H_pool * W_pool
+        self.params['W2'] = np.random.randn(D, hidden_dim) * weight_scale
+        self.params['b2'] = np.zeros(hidden_dim)
+
+        # 第三层（输出仿射层）权重/偏置
+        self.params['W3'] = np.random.randn(hidden_dim, num_classes) * weight_scale
+        self.params['b3'] = np.zeros(num_classes)
+
+        ############################################################################
+        #                             你的代码结束                                 #
+        ############################################################################
+
+        # 将所有参数转换为指定的数据类型
+        for k, v in self.params.items():
+            self.params[k] = v.astype(dtype)
+
+    def loss(self, X, y=None):
+        """
+        评估三层卷积网络的损失和梯度。
+
+        输入/输出：与fc_net.py中的TwoLayerNet具有相同的API。
+        """
+        W1, b1 = self.params["W1"], self.params["b1"]
+        W2, b2 = self.params["W2"], self.params["b2"]
+        W3, b3 = self.params["W3"], self.params["b3"]
+
+        # 将卷积参数传递给卷积层的前向传播
+        # 选择填充和步长以保持输入的空间大小
+        filter_size = W1.shape[2]
+        conv_param = {"stride": 1, "pad": (filter_size - 1) // 2}
+
+        # 将池化参数传递给最大池化层的前向传播
+        pool_param = {"pool_height": 2, "pool_width": 2, "stride": 2}
+
+        scores = None
+        ############################################################################
+        # 实现三层卷积网络的前向传播，计算X的类别得分并将其存储在scores变量中。         #
+        #                                                                          #
+        # 记住可以使用cs231n/fast_layers.py和cs231n/layer_utils.py中定义的函数       #
+        #（已导入）。                                                               #
+        ############################################################################
+        # 前向传播：conv - relu - 2x2 pool -> affine - relu -> affine -> scores
+        # 使用 layer_utils 中的便捷函数
+        # conv层输出形状：(N, num_filters, H, W) -> pool后 (N, num_filters, H/2, W/2)
+        out1, cache1 = conv_relu_pool_forward(X, W1, b1, conv_param, pool_param)
+
+        # 将池化输出展平送入仿射隐藏层
+        N = out1.shape[0]
+        out1_flat = out1.reshape(N, -1)
+        out2, cache2 = affine_relu_forward(out1_flat, W2, b2)
+
+        # 最后一层仿射以得到分类得分
+        scores, cache3 = affine_forward(out2, W3, b3)
+
+        ############################################################################
+        #                             你的代码结束                                 #
+        ############################################################################
+
+        # 如果y为None，则仅返回得分（测试模式）
+        if y is None:
+            return scores
+
+        loss, grads = 0, {}
+        #######################################################################################
+        # 实现三层卷积网络的反向传播，将损失和梯度存储在loss和grads变量中。使用softmax计算数据损失 #
+        # 确保grads[k]存储self.params[k]的梯度。不要忘记添加L2正则化！                           #
+        #                                                                                     #
+        # 注意：为确保你的实现与我们的一致并通过自动测试，请确保你的L2正则化包含0.5的因子，        #
+        # 以简化梯度的表达式。                                                                 #
+        ######################################################################################
+        # 计算softmax损失
+        data_loss, dscores = softmax_loss(scores, y)
+        # L2正则化（包含0.5系数以简化梯度）
+        reg_loss = 0.5 * self.reg * (np.sum(W1 * W1) + np.sum(W2 * W2) + np.sum(W3 * W3))
+        loss = data_loss + reg_loss
+
+        # 反向传播：affine -> affine-relu -> conv-relu-pool
+        dx3, dW3, db3 = affine_backward(dscores, cache3)
+        dx2, dW2, db2 = affine_relu_backward(dx3, cache2)
+
+        # 将dx2重塑回池化输出的形状 (N, num_filters, H_pool, W_pool)
+        dx2_reshaped = dx2.reshape(out1.shape)
+        dx1, dW1, db1 = conv_relu_pool_backward(dx2_reshaped, cache1)
+
+        # 添加正则化梯度
+        dW3 += self.reg * W3
+        dW2 += self.reg * W2
+        dW1 += self.reg * W1
+
+        grads['W1'] = dW1
+        grads['b1'] = db1
+        grads['W2'] = dW2
+        grads['b2'] = db2
+        grads['W3'] = dW3
+        grads['b3'] = db3
+
+        ############################################################################
+        #                             你的代码结束                                 #
+        ############################################################################
+
+        return loss, grads
